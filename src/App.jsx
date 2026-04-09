@@ -109,9 +109,18 @@ function FileViewer({ fileInfo, onClose }) {
             {(data?.type === 'download' || (data?.type === 'text' && data.size > 2 * 1024 * 1024)) && (
               <div className="text-center py-4">
                 <p className="mb-3 text-light">MIME Type: {data.mimeType}</p>
-                <button className="btn btn-primary" onClick={handleDownload}>
-                  다운로드
-                </button>
+                {error === 'File not found' ? (
+                  <>
+                    <p className="text-danger mb-3">The file does not exist.</p>
+                    <button className="btn btn-primary" disabled>
+                      다운로드
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn btn-primary" onClick={handleDownload}>
+                    다운로드
+                  </button>
+                )}
               </div>
             )}
           </div>
