@@ -104,7 +104,21 @@ function FileViewer({ fileInfo, onClose }) {
               </div>
             )}
             {data?.type === 'text' && data.size <= 2 * 1024 * 1024 && (
-              <pre className="bg-black bg-opacity-50 p-3 rounded" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>{data.content}</pre>
+              data.mimeType === 'text/html' ? (
+                <>
+                  <pre className="bg-black bg-opacity-50 p-3 rounded mb-3" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: '20vh', overflow: 'auto' }}>{data.content}</pre>
+                  <div className="border rounded bg-white shadow-sm" style={{ height: '25vh' }}>
+                    <iframe 
+                      srcDoc={data.content} 
+                      title="HTML Preview"
+                      style={{ width: '100%', height: '100%', border: 'none' }}
+                      sandbox="allow-same-origin"
+                    />
+                  </div>
+                </>
+              ) : (
+                <pre className="bg-black bg-opacity-50 p-3 rounded" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>{data.content}</pre>
+              )
             )}
             {(data?.type === 'download' || (data?.type === 'text' && data.size > 2 * 1024 * 1024)) && (
               <div className="text-center py-4">
