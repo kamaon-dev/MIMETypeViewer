@@ -64,6 +64,17 @@ const MAGIC_SIGNATURES = [
   { magic: [0xFE, 0xFF], mime: 'text/plain', ext: 'txt' }, // UTF-16 BE BOM
 ];
 
+// Content-based text detection patterns
+const TEXT_CONTENT_PATTERNS = [
+  { pattern: /^<\s*(!DOCTYPE|html|head|body|div|script|style)/i, mime: 'text/html' },
+  { pattern: /^\s*\{[\s\S]*"[\w]+"\s*:/m, mime: 'application/json' },
+  { pattern: /^\s*\[[\s\S]*\{/m, mime: 'application/json' },
+  { pattern: /^<\?xml\s+version=/m, mime: 'application/xml' },
+  { pattern: /^<!DOCTYPE\s+html/i, mime: 'text/html' },
+  { pattern: /^<html/i, mime: 'text/html' },
+  { pattern: /^<!DOCTYPE\s+html/i, mime: 'text/html' },
+];
+
 // Detect MIME type from file content (magic bytes)
 async function detectMimeType(filePath) {
   try {
@@ -107,6 +118,22 @@ async function detectMimeType(filePath) {
       }
     }
     
+    // Try content-based text detection for extensionless files
+    const content = chunk.toString('utf8');
+    for (const { pattern, mime } of TEXT_CONTENT_PATTERNS) {
+      if (pattern.test(content)) {
+        console.log('[DEBUG] Content pattern matched:', mime);
+        return mime;
+      }
+    }
+    
+    // Check if it looks like plain text (printable ASCII)
+    const isText = chunk.every(b => b < 128 || b >= 192);
+    if (isText && stats.size < 1000000) { // Less than 1MB
+      console.log('[DEBUG] Detected as text/plain');
+      return 'text/plain';
+    }
+    
     // Log first bytes for debugging
     const firstBytes = Array.from(chunk.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
     console.log('[DEBUG] First bytes (hex):', firstBytes);
@@ -117,17 +144,30 @@ async function detectMimeType(filePath) {
   return 'application/octet-stream';
 }
 
+// Extension-based MIME type mapping
+const EXT_MIME_TYPES = {
+  txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
+  css: 'text/css', js: 'application/javascript', mjs: 'application/javascript',
+  gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',
+  svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp', tiff: 'image/tiff', tif: 'image/tiff',
+  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',
+  mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav', ogg: 'audio/ogg',
+  csv: 'text/csv', md: 'text/markdown', markdown: 'text/markdown'
+};
+
 // Get file info with MIME type detection
 async function getFileInfo(filePath, filename) {
   const ext = path.extname(filename).slice(1).toLowerCase();
   console.log(`[DEBUG] getFileInfo called: filename=${filename}, ext=${ext}, filePath=${filePath}, exists=${fs.existsSync(filePath)}`);
   
-  // Always detect from file content first (magic bytes) - more accurate
+  // Try content-based detection first (magic bytes)
   const detectedMime = await detectMimeType(filePath);
   console.log(`[MIME Detection] ${filename}: ${detectedMime}`);
   
+  // Use content-detected MIME if valid
   if (detectedMime && detectedMime !== 'application/octet-stream') {
-    // Use content-detected MIME type
     const detectedExt = detectedMime.split('/')[1]?.replace('x-icon', 'ico').replace('jpeg', 'jpg') || 'bin';
     return {
       mimeType: detectedMime,
@@ -137,18 +177,10 @@ async function getFileInfo(filePath, filename) {
   }
   
   // Fallback to extension-based detection
-  if (ext) {
-    const knownMimes = {
-      txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
-      gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',
-      pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',
-      mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav'
-    };
-    console.log(`[MIME Detection] ${filename} (fallback to extension): ${knownMimes[ext] || 'application/octet-stream'}`);
+  if (ext && EXT_MIME_TYPES[ext]) {
+    console.log(`[MIME Detection] ${filename} (fallback to extension): ${EXT_MIME_TYPES[ext]}`);
     return {
-      mimeType: knownMimes[ext] || 'application/octet-stream',
+      mimeType: EXT_MIME_TYPES[ext],
       extension: ext,
       filename: filename
     };
@@ -157,7 +189,7 @@ async function getFileInfo(filePath, filename) {
   console.log(`[MIME Detection] ${filename}: application/octet-stream (unknown)`);
   return {
     mimeType: 'application/octet-stream',
-    extension: 'bin',
+    extension: ext || 'bin',
     filename: filename
   };
 }
@@ -267,6 +299,13 @@ app.get('/api/file', async (req, res) => {
   res.json(fileInfo);
 });
 
+// Text-based MIME types that can be rendered in viewer
+const TEXT_MIME_TYPES = [
+  'text/plain', 'text/html', 'application/json', 'application/xml',
+  'text/css', 'application/javascript', 'text/csv', 'text/markdown',
+  'text/html; charset=utf-8', 'application/json; charset=utf-8'
+];
+
 app.get('/api/file/content', async (req, res) => {
   const { filename } = req.query;
   
@@ -285,9 +324,27 @@ app.get('/api/file/content', async (req, res) => {
     
     if (found) {
       // Detect actual MIME type from file content
-      const detectedMime = await detectMimeType(filePath);
+      let detectedMime = await detectMimeType(filePath);
+      
+      // Get extension for fallback detection
+      const ext = path.extname(filename).slice(1).toLowerCase();
+      if (!detectedMime || detectedMime === 'application/octet-stream') {
+        detectedMime = EXT_MIME_TYPES[ext] || 'application/octet-stream';
+      }
       console.log(`[FILE_CONTENT] ${filename}: ${detectedMime}`);
       
+      // Check if text-based file
+      const isText = TEXT_MIME_TYPES.includes(detectedMime) || 
+                   TEXT_MIME_TYPES.some(t => detectedMime.startsWith(t));
+      
+      if (isText) {
+        // Return text content directly for viewer
+        const content = await fs.promises.readFile(filePath, 'utf8');
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        return res.json({ content, mimeType: detectedMime });
+      }
+      
+      // Binary file - send as file
       res.setHeader('Content-Type', detectedMime);
       return res.sendFile(filePath);
     }

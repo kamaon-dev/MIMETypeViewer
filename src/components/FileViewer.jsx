@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const TEXT_TYPES = ['text/plain', 'text/html', 'application/json', 'application/xml']
+const TEXT_TYPES = ['text/plain', 'text/html', 'application/json', 'application/xml', 'text/css', 'application/javascript', 'text/csv', 'text/markdown']
 const IMAGE_TYPES = ['image/gif', 'image/jpeg', 'image/webp', 'image/png']
 
 export default function FileViewer({ fileInfo, onClose }) {
@@ -19,16 +19,29 @@ export default function FileViewer({ fileInfo, onClose }) {
             setLoading(false)
             return
           }
-          const blob = await res.blob()
-          const contentType = blob.type
           
-          if (IMAGE_TYPES.includes(contentType)) {
+          const contentType = res.headers.get('content-type') || 'application/octet-stream'
+          const isJson = contentType.includes('application/json')
+          
+          if (isJson) {
+            const json = await res.json()
+            if (json.content !== undefined) {
+              // Text content returned as JSON
+              setData({ type: 'text', mimeType: json.mimeType, content: json.content, size: new Blob([json.content]).size, filename })
+            } else {
+              const blob = await res.blob()
+              const url = URL.createObjectURL(blob)
+              setData({ type: 'download', mimeType: blob.type, content: url, size: blob.size, filename })
+            }
+          } else if (IMAGE_TYPES.includes(contentType)) {
+            const blob = await res.blob()
             const url = URL.createObjectURL(blob)
-            setData({ type: 'image', mimeType: contentType, content: url, size: blob.size })
-          } else if (TEXT_TYPES.includes(contentType)) {
-            const text = await blob.text()
-            setData({ type: 'text', mimeType: contentType, content: text, size: blob.size })
+            setData({ type: 'image', mimeType: contentType, content: url, size: blob.size, filename })
+          } else if (TEXT_TYPES.some(t => contentType.startsWith(t))) {
+            const text = await res.text()
+            setData({ type: 'text', mimeType: contentType, content: text, size: new Blob([text]).size })
           } else {
+            const blob = await res.blob()
             const url = URL.createObjectURL(blob)
             setData({ type: 'download', mimeType: contentType, content: url, size: blob.size })
           }
@@ -45,10 +58,10 @@ export default function FileViewer({ fileInfo, onClose }) {
             setData({ type: 'image', mimeType, content: url, size: blob.size, filename: serverFilename })
           } else if (TEXT_TYPES.includes(mimeType)) {
             const byteSize = new Blob([content]).size
-            setData({ type: 'text', mimeType, content, size: byteSize })
+            setData({ type: 'text', mimeType, content, size: byteSize, filename: serverFilename })
           } else {
             const byteSize = new Blob([content]).size
-            setData({ type: 'download', mimeType, content, size: byteSize })
+            setData({ type: 'download', mimeType, content, size: byteSize, filename: serverFilename })
           }
         }
         setLoading(false)
@@ -61,17 +74,18 @@ export default function FileViewer({ fileInfo, onClose }) {
   }, [fileInfo])
 
   const handleDownload = () => {
+    const downloadFilename = data?.filename || filename || `file.${extension}`
     if (data?.content?.startsWith('blob:')) {
       const a = document.createElement('a')
       a.href = data.content
-      a.download = filename || `file.${extension}`
+      a.download = downloadFilename
       a.click()
     } else {
       const blob = new Blob([data.content], { type: data.mimeType })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `file.${extension}`
+      a.download = downloadFilename
       a.click()
       URL.revokeObjectURL(url)
     }
@@ -84,6 +98,9 @@ export default function FileViewer({ fileInfo, onClose }) {
     onClose()
   }
 
+  // Show download badge only for image and text (not for 'download' type)
+  const showDownloadBadge = data?.type === 'image' || data?.type === 'text'
+
   return (
     <div className="modal fade show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={handleClose}>
       <div className="modal-dialog modal-lg modal-dialog-centered" onClick={e => e.stopPropagation()}>
@@ -92,6 +109,20 @@ export default function FileViewer({ fileInfo, onClose }) {
             <h5 className="modal-title mb-0">MIME Type Viewer</h5>
             <div className="d-flex align-items-center gap-3">
               {data?.mimeType && <small className="text-secondary">{data.mimeType}</small>}
+              {showDownloadBadge && (
+                <button 
+                  type="button" 
+                  className="btn btn-outline-light btn-sm d-flex align-items-center gap-1" 
+                  onClick={handleDownload}
+                  title="Download"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                  </svg>
+                  Download
+                </button>
+              )}
               <button type="button" className="btn-close btn-close-white" onClick={handleClose}></button>
             </div>
           </div>

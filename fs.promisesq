@@ -1,0 +1,267 @@
+warning: in the working copy of 'src/components/FileViewer.jsx', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/server/index.js b/server/index.js[m
+[1mindex 02f5f7b..d770a90 100644[m
+[1m--- a/server/index.js[m
+[1m+++ b/server/index.js[m
+[36m@@ -64,6 +64,17 @@[m [mconst MAGIC_SIGNATURES = [[m
+   { magic: [0xFE, 0xFF], mime: 'text/plain', ext: 'txt' }, // UTF-16 BE BOM[m
+ ];[m
+ [m
+[32m+[m[32m// Content-based text detection patterns[m[41m[m
+[32m+[m[32mconst TEXT_CONTENT_PATTERNS = [[m[41m[m
+[32m+[m[32m  { pattern: /^<\s*(!DOCTYPE|html|head|body|div|script|style)/i, mime: 'text/html' },[m[41m[m
+[32m+[m[32m  { pattern: /^\s*\{[\s\S]*"[\w]+"\s*:/m, mime: 'application/json' },[m[41m[m
+[32m+[m[32m  { pattern: /^\s*\[[\s\S]*\{/m, mime: 'application/json' },[m[41m[m
+[32m+[m[32m  { pattern: /^<\?xml\s+version=/m, mime: 'application/xml' },[m[41m[m
+[32m+[m[32m  { pattern: /^<!DOCTYPE\s+html/i, mime: 'text/html' },[m[41m[m
+[32m+[m[32m  { pattern: /^<html/i, mime: 'text/html' },[m[41m[m
+[32m+[m[32m  { pattern: /^<!DOCTYPE\s+html/i, mime: 'text/html' },[m[41m[m
+[32m+[m[32m];[m[41m[m
+[32m+[m[41m[m
+ // Detect MIME type from file content (magic bytes)[m
+ async function detectMimeType(filePath) {[m
+   try {[m
+[36m@@ -107,6 +118,22 @@[m [masync function detectMimeType(filePath) {[m
+       }[m
+     }[m
+     [m
+[32m+[m[32m    // Try content-based text detection for extensionless files[m[41m[m
+[32m+[m[32m    const content = chunk.toString('utf8');[m[41m[m
+[32m+[m[32m    for (const { pattern, mime } of TEXT_CONTENT_PATTERNS) {[m[41m[m
+[32m+[m[32m      if (pattern.test(content)) {[m[41m[m
+[32m+[m[32m        console.log('[DEBUG] Content pattern matched:', mime);[m[41m[m
+[32m+[m[32m        return mime;[m[41m[m
+[32m+[m[32m      }[m[41m[m
+[32m+[m[32m    }[m[41m[m
+[32m+[m[41m    [m
+[32m+[m[32m    // Check if it looks like plain text (printable ASCII)[m[41m[m
+[32m+[m[32m    const isText = chunk.every(b => b < 128 || b >= 192);[m[41m[m
+[32m+[m[32m    if (isText && stats.size < 1000000) { // Less than 1MB[m[41m[m
+[32m+[m[32m      console.log('[DEBUG] Detected as text/plain');[m[41m[m
+[32m+[m[32m      return 'text/plain';[m[41m[m
+[32m+[m[32m    }[m[41m[m
+[32m+[m[41m    [m
+     // Log first bytes for debugging[m
+     const firstBytes = Array.from(chunk.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');[m
+     console.log('[DEBUG] First bytes (hex):', firstBytes);[m
+[36m@@ -117,17 +144,30 @@[m [masync function detectMimeType(filePath) {[m
+   return 'application/octet-stream';[m
+ }[m
+ [m
+[32m+[m[32m// Extension-based MIME type mapping[m[41m[m
+[32m+[m[32mconst EXT_MIME_TYPES = {[m[41m[m
+[32m+[m[32m  txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',[m[41m[m
+[32m+[m[32m  css: 'text/css', js: 'application/javascript', mjs: 'application/javascript',[m[41m[m
+[32m+[m[32m  gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',[m[41m[m
+[32m+[m[32m  svg: 'image/svg+xml', ico: 'image/x-icon', bmp: 'image/bmp', tiff: 'image/tiff', tif: 'image/tiff',[m[41m[m
+[32m+[m[32m  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',[m[41m[m
+[32m+[m[32m  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',[m[41m[m
+[32m+[m[32m  zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',[m[41m[m
+[32m+[m[32m  mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav', ogg: 'audio/ogg',[m[41m[m
+[32m+[m[32m  csv: 'text/csv', md: 'text/markdown', markdown: 'text/markdown'[m[41m[m
+[32m+[m[32m};[m[41m[m
+[32m+[m[41m[m
+ // Get file info with MIME type detection[m
+ async function getFileInfo(filePath, filename) {[m
+   const ext = path.extname(filename).slice(1).toLowerCase();[m
+   console.log(`[DEBUG] getFileInfo called: filename=${filename}, ext=${ext}, filePath=${filePath}, exists=${fs.existsSync(filePath)}`);[m
+   [m
+[31m-  // Always detect from file content first (magic bytes) - more accurate[m
+[32m+[m[32m  // Try content-based detection first (magic bytes)[m[41m[m
+   const detectedMime = await detectMimeType(filePath);[m
+   console.log(`[MIME Detection] ${filename}: ${detectedMime}`);[m
+   [m
+[32m+[m[32m  // Use content-detected MIME if valid[m[41m[m
+   if (detectedMime && detectedMime !== 'application/octet-stream') {[m
+[31m-    // Use content-detected MIME type[m
+     const detectedExt = detectedMime.split('/')[1]?.replace('x-icon', 'ico').replace('jpeg', 'jpg') || 'bin';[m
+     return {[m
+       mimeType: detectedMime,[m
+[36m@@ -137,18 +177,10 @@[m [masync function getFileInfo(filePath, filename) {[m
+   }[m
+   [m
+   // Fallback to extension-based detection[m
+[31m-  if (ext) {[m
+[31m-    const knownMimes = {[m
+[31m-      txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',[m
+[31m-      gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',[m
+[31m-      pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',[m
+[31m-      xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',[m
+[31m-      zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',[m
+[31m-      mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav'[m
+[31m-    };[m
+[31m-    console.log(`[MIME Detection] ${filename} (fallback to extension): ${knownMimes[ext] || 'application/octet-stream'}`);[m
+[32m+[m[32m  if (ext && EXT_MIME_TYPES[ext]) {[m[41m[m
+[32m+[m[32m    console.log(`[MIME Detection] ${filename} (fallback to extension): ${EXT_MIME_TYPES[ext]}`);[m[41m[m
+     return {[m
+[31m-      mimeType: knownMimes[ext] || 'application/octet-stream',[m
+[32m+[m[32m      mimeType: EXT_MIME_TYPES[ext],[m[41m[m
+       extension: ext,[m
+       filename: filename[m
+     };[m
+[36m@@ -157,7 +189,7 @@[m [masync function getFileInfo(filePath, filename) {[m
+   console.log(`[MIME Detection] ${filename}: application/octet-stream (unknown)`);[m
+   return {[m
+     mimeType: 'application/octet-stream',[m
+[31m-    extension: 'bin',[m
+[32m+[m[32m    extension: ext || 'bin',[m[41m[m
+     filename: filename[m
+   };[m
+ }[m
+[36m@@ -267,6 +299,13 @@[m [mapp.get('/api/file', async (req, res) => {[m
+   res.json(fileInfo);[m
+ });[m
+ [m
+[32m+[m[32m// Text-based MIME types that can be rendered in viewer[m[41m[m
+[32m+[m[32mconst TEXT_MIME_TYPES = [[m[41m[m
+[32m+[m[32m  'text/plain', 'text/html', 'application/json', 'application/xml',[m[41m[m
+[32m+[m[32m  'text/css', 'application/javascript', 'text/csv', 'text/markdown',[m[41m[m
+[32m+[m[32m  'text/html; charset=utf-8', 'application/json; charset=utf-8'[m[41m[m
+[32m+[m[32m];[m[41m[m
+[32m+[m[41m[m
+ app.get('/api/file/content', async (req, res) => {[m
+   const { filename } = req.query;[m
+   [m
+[36m@@ -285,9 +324,27 @@[m [mapp.get('/api/file/content', async (req, res) => {[m
+     [m
+     if (found) {[m
+       // Detect actual MIME type from file content[m
+[31m-      const detectedMime = await detectMimeType(filePath);[m
+[32m+[m[32m      let detectedMime = await detectMimeType(filePath);[m[41m[m
+[32m+[m[41m      [m
+[32m+[m[32m      // Get extension for fallback detection[m[41m[m
+[32m+[m[32m      const ext = path.extname(filename).slice(1).toLowerCase();[m[41m[m
+[32m+[m[32m      if (!detectedMime || detectedMime === 'application/octet-stream') {[m[41m[m
+[32m+[m[32m        detectedMime = EXT_MIME_TYPES[ext] || 'application/octet-stream';[m[41m[m
+[32m+[m[32m      }[m[41m[m
+       console.log(`[FILE_CONTENT] ${filename}: ${detectedMime}`);[m
+       [m
+[32m+[m[32m      // Check if text-based file[m[41m[m
+[32m+[m[32m      const isText = TEXT_MIME_TYPES.includes(detectedMime) ||[m[41m [m
+[32m+[m[32m                   TEXT_MIME_TYPES.some(t => detectedMime.startsWith(t));[m[41m[m
+[32m+[m[41m      [m
+[32m+[m[32m      if (isText) {[m[41m[m
+[32m+[m[32m        // Return text content directly for viewer[m[41m[m
+[32m+[m[32m        const content = await fs.promises.readFile(filePath, 'utf8');[m[41m[m
+[32m+[m[32m        res.setHeader('Content-Type', 'text/plain; charset=utf-8');[m[41m[m
+[32m+[m[32m        return res.json({ content, mimeType: detectedMime });[m[41m[m
+[32m+[m[32m      }[m[41m[m
+[32m+[m[41m      [m
+[32m+[m[32m      // Binary file - send as file[m[41m[m
+       res.setHeader('Content-Type', detectedMime);[m
+       return res.sendFile(filePath);[m
+     }[m
+[1mdiff --git a/src/components/FileViewer.jsx b/src/components/FileViewer.jsx[m
+[1mindex b6b8d8d..d82e68e 100644[m
+[1m--- a/src/components/FileViewer.jsx[m
+[1m+++ b/src/components/FileViewer.jsx[m
+[36m@@ -1,6 +1,6 @@[m
+ import { useState, useEffect } from 'react'[m
+ [m
+[31m-const TEXT_TYPES = ['text/plain', 'text/html', 'application/json', 'application/xml'][m
+[32m+[m[32mconst TEXT_TYPES = ['text/plain', 'text/html', 'application/json', 'application/xml', 'text/css', 'application/javascript', 'text/csv', 'text/markdown'][m
+ const IMAGE_TYPES = ['image/gif', 'image/jpeg', 'image/webp', 'image/png'][m
+ [m
+ export default function FileViewer({ fileInfo, onClose }) {[m
+[36m@@ -19,16 +19,29 @@[m [mexport default function FileViewer({ fileInfo, onClose }) {[m
+             setLoading(false)[m
+             return[m
+           }[m
+[31m-          const blob = await res.blob()[m
+[31m-          const contentType = blob.type[m
+           [m
+[31m-          if (IMAGE_TYPES.includes(contentType)) {[m
+[32m+[m[32m          const contentType = res.headers.get('content-type') || 'application/octet-stream'[m
+[32m+[m[32m          const isJson = contentType.includes('application/json')[m
+[32m+[m[41m          [m
+[32m+[m[32m          if (isJson) {[m
+[32m+[m[32m            const json = await res.json()[m
+[32m+[m[32m            if (json.content !== undefined) {[m
+[32m+[m[32m              // Text content returned as JSON[m
+[32m+[m[32m              setData({ type: 'text', mimeType: json.mimeType, content: json.content, size: new Blob([json.content]).size, filename })[m
+[32m+[m[32m            } else {[m
+[32m+[m[32m              const blob = await res.blob()[m
+[32m+[m[32m              const url = URL.createObjectURL(blob)[m
+[32m+[m[32m              setData({ type: 'download', mimeType: blob.type, content: url, size: blob.size, filename })[m
+[32m+[m[32m            }[m
+[32m+[m[32m          } else if (IMAGE_TYPES.includes(contentType)) {[m
+[32m+[m[32m            const blob = await res.blob()[m
+             const url = URL.createObjectURL(blob)[m
+[31m-            setData({ type: 'image', mimeType: contentType, content: url, size: blob.size })[m
+[31m-          } else if (TEXT_TYPES.includes(contentType)) {[m
+[31m-            const text = await blob.text()[m
+[31m-            setData({ type: 'text', mimeType: contentType, content: text, size: blob.size })[m
+[32m+[m[32m            setData({ type: 'image', mimeType: contentType, content: url, size: blob.size, filename })[m
+[32m+[m[32m          } else if (TEXT_TYPES.some(t => contentType.startsWith(t))) {[m
+[32m+[m[32m            const text = await res.text()[m
+[32m+[m[32m            setData({ type: 'text', mimeType: contentType, content: text, size: new Blob([text]).size })[m
+           } else {[m
+[32m+[m[32m            const blob = await res.blob()[m
+             const url = URL.createObjectURL(blob)[m
+             setData({ type: 'download', mimeType: contentType, content: url, size: blob.size })[m
+           }[m
+[36m@@ -45,10 +58,10 @@[m [mexport default function FileViewer({ fileInfo, onClose }) {[m
+             setData({ type: 'image', mimeType, content: url, size: blob.size, filename: serverFilename })[m
+           } else if (TEXT_TYPES.includes(mimeType)) {[m
+             const byteSize = new Blob([content]).size[m
+[31m-            setData({ type: 'text', mimeType, content, size: byteSize })[m
+[32m+[m[32m            setData({ type: 'text', mimeType, content, size: byteSize, filename: serverFilename })[m
+           } else {[m
+             const byteSize = new Blob([content]).size[m
+[31m-            setData({ type: 'download', mimeType, content, size: byteSize })[m
+[32m+[m[32m            setData({ type: 'download', mimeType, content, size: byteSize, filename: serverFilename })[m
+           }[m
+         }[m
+         setLoading(false)[m
+[36m@@ -61,17 +74,18 @@[m [mexport default function FileViewer({ fileInfo, onClose }) {[m
+   }, [fileInfo])[m
+ [m
+   const handleDownload = () => {[m
+[32m+[m[32m    const downloadFilename = data?.filename || filename || `file.${extension}`[m
+     if (data?.content?.startsWith('blob:')) {[m
+       const a = document.createElement('a')[m
+       a.href = data.content[m
+[31m-      a.download = filename || `file.${extension}`[m
+[32m+[m[32m      a.download = downloadFilename[m
+       a.click()[m
+     } else {[m
+       const blob = new Blob([data.content], { type: data.mimeType })[m
+       const url = URL.createObjectURL(blob)[m
+       const a = document.createElement('a')[m
+       a.href = url[m
+[31m-      a.download = `file.${extension}`[m
+[32m+[m[32m      a.download = downloadFilename[m
+       a.click()[m
+       URL.revokeObjectURL(url)[m
+     }[m
+[36m@@ -84,6 +98,9 @@[m [mexport default function FileViewer({ fileInfo, onClose }) {[m
+     onClose()[m
+   }[m
+ [m
+[32m+[m[32m  // Show download badge only for image and text (not for 'download' type)[m
+[32m+[m[32m  const showDownloadBadge = data?.type === 'image' || data?.type === 'text'[m
+[32m+[m
+   return ([m
+     <div className="modal fade show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={handleClose}>[m
+       <div className="modal-dialog modal-lg modal-dialog-centered" onClick={e => e.stopPropagation()}>[m
+[36m@@ -92,6 +109,20 @@[m [mexport default function FileViewer({ fileInfo, onClose }) {[m
+             <h5 className="modal-title mb-0">MIME Type Viewer</h5>[m
+             <div className="d-flex align-items-center gap-3">[m
+               {data?.mimeType && <small className="text-secondary">{data.mimeType}</small>}[m
+[32m+[m[32m              {showDownloadBadge && ([m
+[32m+[m[32m                <button[m[41m [m
+[32m+[m[32m                  type="button"[m[41m [m
+[32m+[m[32m                  className="btn btn-outline-light btn-sm d-flex align-items-center gap-1"[m[41m [m
+[32m+[m[32m                  onClick={handleDownload}[m
+[32m+[m[32m                  title="Download"[m
+[32m+[m[32m                >[m
+[32m+[m[32m                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">[m
+[32m+[m[32m                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>[m
+[32m+[m[32m                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>[m
+[32m+[m[32m                  </svg>[m
+[32m+[m[32m                  Download[m
+[32m+[m[32m                </button>[m
+[32m+[m[32m              )}[m
+               <button type="button" className="btn-close btn-close-white" onClick={handleClose}></button>[m
+             </div>[m
+           </div>[m
