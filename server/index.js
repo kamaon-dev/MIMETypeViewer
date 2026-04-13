@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import fs from 'fs';
+import { fileTypeFromBuffer } from 'file-type';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -17,6 +18,148 @@ if (!fs.existsSync(uploadDir)) {
 
 if (!fs.existsSync(customUploadDir)) {
   fs.mkdirSync(customUploadDir, { recursive: true });
+}
+
+// MIME type mapping for file-type library results
+const MIME_TYPES = {
+  txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
+  gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',
+  pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',
+  mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav', svg: 'image/svg+xml',
+  bmp: 'image/bmp', ico: 'image/x-icon', tiff: 'image/tiff', tif: 'image/tiff',
+  psd: 'image/vnd.adobe.photoshop', zip: 'application/zip'
+};
+
+// Magic bytes signatures for common file types (matching Linux `file` command detection)
+const MAGIC_SIGNATURES = [
+  // Images
+  { magic: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], mime: 'image/png', ext: 'png' },
+  { magic: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg', ext: 'jpg' },
+  { magic: [0x47, 0x49, 0x46, 0x38], mime: 'image/gif', ext: 'gif' },
+  { magic: [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50], mime: 'image/webp', ext: 'webp' },
+  { magic: [0x42, 0x4D], mime: 'image/bmp', ext: 'bmp' },
+  { magic: [0x00, 0x00, 0x01, 0x00], mime: 'image/x-icon', ext: 'ico' },
+  { magic: [0x49, 0x49, 0x2A, 0x00], mime: 'image/tiff', ext: 'tif' },
+  { magic: [0x4D, 0x4D, 0x00, 0x2A], mime: 'image/tiff', ext: 'tif' },
+  // Documents
+  { magic: [0x25, 0x50, 0x44, 0x46], mime: 'application/pdf', ext: 'pdf' },
+  { magic: [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1], mime: 'application/msword', ext: 'doc' },
+  // Archives
+  { magic: [0x50, 0x4B, 0x03, 0x04], mime: 'application/zip', ext: 'zip' },
+  { magic: [0x50, 0x4B, 0x05, 0x06], mime: 'application/zip', ext: 'zip' },
+  { magic: [0x50, 0x4B, 0x07, 0x08], mime: 'application/zip', ext: 'zip' },
+  { magic: [0x52, 0x61, 0x72, 0x21], mime: 'application/x-rar-compressed', ext: 'rar' },
+  { magic: [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C], mime: 'application/x-7z-compressed', ext: '7z' },
+  // Audio/Video
+  { magic: [0x49, 0x44, 0x33], mime: 'audio/mpeg', ext: 'mp3' },
+  { magic: [0xFF, 0xFB], mime: 'audio/mpeg', ext: 'mp3' },
+  { magic: [0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6F, 0x6D], mime: 'video/mp4', ext: 'mp4' },
+  { magic: [0x00, 0x00, 0x00, 0x1C, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32], mime: 'video/mp4', ext: 'mp4' },
+  { magic: [0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45], mime: 'audio/wav', ext: 'wav' },
+  // Text-based
+  { magic: [0xEF, 0xBB, 0xBF], mime: 'text/plain', ext: 'txt' }, // UTF-8 BOM
+  { magic: [0xFF, 0xFE], mime: 'text/plain', ext: 'txt' }, // UTF-16 LE BOM
+  { magic: [0xFE, 0xFF], mime: 'text/plain', ext: 'txt' }, // UTF-16 BE BOM
+];
+
+// Detect MIME type from file content (magic bytes)
+async function detectMimeType(filePath) {
+  try {
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      console.error('[DEBUG] File does not exist:', filePath);
+      return 'application/octet-stream';
+    }
+    
+    const stats = await fs.promises.stat(filePath);
+    if (stats.size === 0) {
+      console.error('[DEBUG] File is empty:', filePath);
+      return 'application/octet-stream';
+    }
+    console.log('[DEBUG] File size:', stats.size);
+    
+    // First try file-type library
+    const chunk = await fs.promises.readFile(filePath, { length: 4100 });
+    console.log('[DEBUG] Read chunk size:', chunk.length);
+    
+    const result = await fileTypeFromBuffer(chunk);
+    console.log('[DEBUG] file-type result:', result);
+    
+    if (result) {
+      return MIME_TYPES[result.ext] || result.mime;
+    }
+
+    // Fallback: magic bytes detection
+    for (const sig of MAGIC_SIGNATURES) {
+      if (sig.magic.length > chunk.length) continue;
+      let match = true;
+      for (let i = 0; i < sig.magic.length; i++) {
+        if (chunk[i] !== sig.magic[i]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) {
+        console.log('[DEBUG] Magic bytes matched:', sig.mime);
+        return sig.mime;
+      }
+    }
+    
+    // Log first bytes for debugging
+    const firstBytes = Array.from(chunk.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    console.log('[DEBUG] First bytes (hex):', firstBytes);
+    
+  } catch (e) {
+    console.error('[DEBUG] Error detecting file type:', e.message, e.stack);
+  }
+  return 'application/octet-stream';
+}
+
+// Get file info with MIME type detection
+async function getFileInfo(filePath, filename) {
+  const ext = path.extname(filename).slice(1).toLowerCase();
+  console.log(`[DEBUG] getFileInfo called: filename=${filename}, ext=${ext}, filePath=${filePath}, exists=${fs.existsSync(filePath)}`);
+  
+  // Always detect from file content first (magic bytes) - more accurate
+  const detectedMime = await detectMimeType(filePath);
+  console.log(`[MIME Detection] ${filename}: ${detectedMime}`);
+  
+  if (detectedMime && detectedMime !== 'application/octet-stream') {
+    // Use content-detected MIME type
+    const detectedExt = detectedMime.split('/')[1]?.replace('x-icon', 'ico').replace('jpeg', 'jpg') || 'bin';
+    return {
+      mimeType: detectedMime,
+      extension: ext || detectedExt,
+      filename: filename
+    };
+  }
+  
+  // Fallback to extension-based detection
+  if (ext) {
+    const knownMimes = {
+      txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
+      gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',
+      pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',
+      mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav'
+    };
+    console.log(`[MIME Detection] ${filename} (fallback to extension): ${knownMimes[ext] || 'application/octet-stream'}`);
+    return {
+      mimeType: knownMimes[ext] || 'application/octet-stream',
+      extension: ext,
+      filename: filename
+    };
+  }
+  
+  console.log(`[MIME Detection] ${filename}: application/octet-stream (unknown)`);
+  return {
+    mimeType: 'application/octet-stream',
+    extension: 'bin',
+    filename: filename
+  };
 }
 
 const storage = multer.diskStorage({
@@ -55,41 +198,19 @@ app.use(express.urlencoded({
 app.use('/download', express.static(uploadDir));
 app.use('/download_custom', express.static(customUploadDir));
 
-app.get('/api/file', (req, res) => {
+app.get('/api/file', async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   const { type, filename } = req.query;
   
   if (filename) {
-    const filePath = path.join(uploadDir, filename);
+    let filePath = path.join(uploadDir, filename);
     if (fs.existsSync(filePath)) {
-      const ext = path.extname(filename).slice(1).toLowerCase();
-      const mimeTypes = {
-        txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
-        gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png'
-      };
-      const fileInfo = {
-        mimeType: mimeTypes[ext] || 'application/octet-stream',
-        extension: ext,
-        filename: filename
-      };
+      const fileInfo = await getFileInfo(filePath, filename);
       return res.json(fileInfo);
     }
-    const customFilePath = path.join(customUploadDir, filename);
-    if (fs.existsSync(customFilePath)) {
-      const ext = path.extname(filename).slice(1).toLowerCase();
-      const mimeTypes = {
-        txt: 'text/plain', html: 'text/html', json: 'application/json', xml: 'application/xml',
-        gif: 'image/gif', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', png: 'image/png',
-        pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        zip: 'application/zip', rar: 'application/x-rar-compressed', '7z': 'application/x-7z-compressed',
-        mp3: 'audio/mpeg', mp4: 'video/mp4', wav: 'audio/wav'
-      };
-      const fileInfo = {
-        mimeType: mimeTypes[ext] || 'application/octet-stream',
-        extension: ext,
-        filename: filename
-      };
+    filePath = path.join(customUploadDir, filename);
+    if (fs.existsSync(filePath)) {
+      const fileInfo = await getFileInfo(filePath, filename);
       return res.json(fileInfo);
     }
   }
@@ -146,16 +267,28 @@ app.get('/api/file', (req, res) => {
   res.json(fileInfo);
 });
 
-app.get('/api/file/content', (req, res) => {
+app.get('/api/file/content', async (req, res) => {
   const { filename } = req.query;
   
   if (filename) {
     let filePath = path.join(uploadDir, filename);
+    let found = false;
+    
     if (fs.existsSync(filePath)) {
-      return res.sendFile(filePath);
+      found = true;
+    } else {
+      filePath = path.join(customUploadDir, filename);
+      if (fs.existsSync(filePath)) {
+        found = true;
+      }
     }
-    filePath = path.join(customUploadDir, filename);
-    if (fs.existsSync(filePath)) {
+    
+    if (found) {
+      // Detect actual MIME type from file content
+      const detectedMime = await detectMimeType(filePath);
+      console.log(`[FILE_CONTENT] ${filename}: ${detectedMime}`);
+      
+      res.setHeader('Content-Type', detectedMime);
       return res.sendFile(filePath);
     }
   }
@@ -187,10 +320,24 @@ app.get('/api/custom/files', (req, res) => {
   });
 });
 
-app.post('/api/upload', upload.single('file'), (req, res) => {
-  const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.json({ success: true, filename: originalName });
+app.post('/api/upload', upload.single('file'), async (req, res) => {
+  try {
+    const originalName = Buffer.from(req.file.originalname, 'latin1').toString('utf8');
+    const filePath = req.file.path;
+    
+    console.log(`[UPLOAD] File uploaded: ${originalName}`);
+    console.log(`[UPLOAD] File path: ${filePath}`);
+    
+    // Detect and log MIME type of uploaded file
+    const detectedMime = await detectMimeType(filePath);
+    console.log(`[UPLOAD] MIME Type: ${detectedMime}`);
+    
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.json({ success: true, filename: originalName, mimeType: detectedMime });
+  } catch (error) {
+    console.error('[UPLOAD] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 app.listen(3000, () => {
